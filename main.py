@@ -58,7 +58,6 @@ def get_args_parser():
     parser.add_argument('--two_stage', default=False, action='store_true')
     parser.add_argument('--accurate_ratio', default=False, action='store_true')
 
-
     # Model parameters
     parser.add_argument('--frozen_weights', type=str, default=None,
                         help="Path to the pretrained model. If set, only the mask head will be trained")
