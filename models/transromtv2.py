@@ -35,7 +35,7 @@ from einops import rearrange, repeat
 
 from .backbone import build_backbone
 from .matcher import build_matcher
-from .deformable_transformer_plus import build_deforamble_transformer, FeatureResizer, VisionLanguageFusionModule
+from .deformable_transformer_vlf import build_deforamble_transformer, FeatureResizer, VisionLanguageFusionModule
 from .qim import build as build_query_interaction_layer
 from .memory_bank import build_memory_bank
 from .deformable_detr import SetCriterion, MLP
@@ -414,9 +414,11 @@ def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
-class TransRMOT(nn.Module):
-    def __init__(self, backbone, transformer, num_classes, num_queries, num_feature_levels, criterion, track_embed,
-                 aux_loss=True, with_box_refine=False, two_stage=False, memory_bank=None, use_checkpoint=False):
+class TransRMOTV2(nn.Module):
+    def __init__(self, backbone, transformer, num_classes, num_queries, 
+                 num_feature_levels, criterion, track_embed, aux_loss=True, 
+                 with_box_refine=False, two_stage=False, memory_bank=None, 
+                 use_checkpoint=False, sentence_fusion_mode=None,):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -439,6 +441,8 @@ class TransRMOT(nn.Module):
         self.refer_embed = nn.Linear(hidden_dim, 1) # this is referring branch
         self.num_feature_levels = num_feature_levels
         self.use_checkpoint = use_checkpoint
+        self.sentence_fusion_mode = sentence_fusion_mode
+
         if not two_stage:
             self.query_embed = nn.Embedding(num_queries, hidden_dim * 2)
         if num_feature_levels > 1:
@@ -600,6 +604,11 @@ class TransRMOT(nn.Module):
         text_pos = self.text_pos(NestedTensor(text_word_features, text_word_mask)).permute(2, 0, 1)
         text_word_features = text_word_features.permute(1, 0, 2)
 
+        text_dict = {
+            "text_word_features": text_word_features,  # bs, 195, d_model
+            "text_sentences_features": text_sentence_features,  # bs, d_model"
+        }
+
         srcs = []
         masks = []
         for l, feat in enumerate(features):
@@ -645,8 +654,13 @@ class TransRMOT(nn.Module):
                 masks.append(mask)
                 pos.append(pos_l)
 
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = \
-            self.transformer(srcs, masks, pos, track_instances.query_pos, text_sentence_features, ref_pts=track_instances.ref_pts)
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact,fused_text = \
+            self.transformer(srcs, masks, pos, 
+                             track_instances.query_pos, 
+                             text_dict = text_dict,
+                             ref_pts=track_instances.ref_pts,
+                             sentence_fusion_mode = self.sentence_fusion_mode,
+                             )
 
         outputs_classes = []
         outputs_coords = []
@@ -846,7 +860,7 @@ def build(args):
     criterion = ClipMatcher(num_classes, matcher=img_matcher, weight_dict=weight_dict, losses=losses)
     criterion.to(device)
     postprocessors = {}
-    model = TransRMOT(
+    model = TransRMOTV2(
         backbone,
         transformer,
         track_embed=query_interaction_layer,
@@ -859,5 +873,6 @@ def build(args):
         two_stage=args.two_stage,
         memory_bank=memory_bank,
         use_checkpoint=args.use_checkpoint,
+        sentence_fusion_mode=args.sentence_fusion_mode,
     )
     return model, criterion, postprocessors

@@ -26,7 +26,6 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch import Tensor
-import logging
 
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
@@ -194,43 +193,6 @@ def reduce_dict(input_dict, average=True):
     return reduced_dict
 
 
-import os
-import logging
-import torch.distributed as dist
-
-def setup_logger(log_dir, log_filename="train.log", rank=0):
-    # 确保日志目录和子目录存在
-    # train_log_dir = os.path.join(log_dir, 'train')  # 子目录 'train'
-    os.makedirs(log_dir, exist_ok=True)
-    
-    # 拼接日志文件的完整路径
-    log_file = os.path.join(log_dir, log_filename)
-
-    # 避免重复添加 handlers
-    logger = logging.getLogger()
-    if logger.hasHandlers():
-        logger.handlers.clear()
-    
-    handlers = [logging.FileHandler(log_file)]  # 日志写入到文件
-    
-    # 仅在 rank=0 进程打印到控制台
-    if rank == 0:
-        handlers.append(logging.StreamHandler())
-
-    # 配置日志记录器
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=handlers
-    )
-
-    # 仅在 rank=0 进程记录训练开始信息
-    if rank == 0:
-        logging.info(f"A new Training: {log_dir.split('/')[-2]}")
-
-    return log_file
-
-
 class MetricLogger(object):
     def __init__(self, delimiter="\t"):
         self.meters = defaultdict(SmoothedValue)
@@ -302,25 +264,23 @@ class MetricLogger(object):
             if i % print_freq == 0 or i == len(iterable) - 1:
                 eta_seconds = iter_time.global_avg * (len(iterable) - i)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-                if get_rank() == 0:
-                    if torch.cuda.is_available():
-                        logging.info(log_msg.format(
-                            i, len(iterable), eta=eta_string,
-                            meters=str(self),
-                            time=str(iter_time), data=str(data_time),
-                            memory=torch.cuda.max_memory_allocated() / MB))                    
-                    else:
-                        logging.info(log_msg.format(
-                            i, len(iterable), eta=eta_string,
-                            meters=str(self),
-                            time=str(iter_time), data=str(data_time)))
+                if torch.cuda.is_available():
+                    print(log_msg.format(
+                        i, len(iterable), eta=eta_string,
+                        meters=str(self),
+                        time=str(iter_time), data=str(data_time),
+                        memory=torch.cuda.max_memory_allocated() / MB))
+                else:
+                    print(log_msg.format(
+                        i, len(iterable), eta=eta_string,
+                        meters=str(self),
+                        time=str(iter_time), data=str(data_time)))
             i += 1
             end = time.time()
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        if get_rank() == 0:
-            logging.info('{} Total time: {} ({:.4f} s / it)'.format(
-                header, total_time_str, total_time / len(iterable)))    
+        print('{} Total time: {} ({:.4f} s / it)'.format(
+            header, total_time_str, total_time / len(iterable)))
 
 
 def get_sha():

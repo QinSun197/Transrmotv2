@@ -5,7 +5,7 @@
 # Copyright (c) 2020 SenseTime. All Rights Reserved.
 # ------------------------------------------------------------------------
 
-python3 inference.py \
+taskset -c 27-30 python3 inference.py \
 --meta_arch rmot \
 --dataset_file e2e_rmot \
 --epoch 200 \
@@ -25,6 +25,6 @@ python3 inference.py \
 --fp_ratio 0.3 \
 --query_interaction_layer QIM \
 --extra_track_attn \
---resume exps/default/checkpoint0099.pth \
---output_dir exps/default \
---visualization
+--resume ./weights/checkpoint0099.pth \
+--output_dir ./outputs/debug \
+# --visualization

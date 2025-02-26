@@ -27,11 +27,11 @@ def load_model(model, model_path, optimizer=None, resume=False,
     for k in state_dict:
         if k in model_state_dict:
             if state_dict[k].shape != model_state_dict[k].shape:
-                print('Skip loading parameter {}, required shape{}, ' \
-                      'loaded shape{}. {}'.format(
-                    k, model_state_dict[k].shape, state_dict[k].shape, msg))
+                # print('Skip loading parameter {}, required shape{}, ' \
+                #       'loaded shape{}. {}'.format(
+                #     k, model_state_dict[k].shape, state_dict[k].shape, msg))
                 if 'class_embed' in k:
-                    print("load class_embed: {} shape={}".format(k, state_dict[k].shape))
+                    # print("load class_embed: {} shape={}".format(k, state_dict[k].shape))
                     if model_state_dict[k].shape[0] == 1:
                         state_dict[k] = state_dict[k][1:2]
                     elif model_state_dict[k].shape[0] == 2:
@@ -46,7 +46,7 @@ def load_model(model, model_path, optimizer=None, resume=False,
             print('Drop parameter {}.'.format(k) + msg)
     for k in model_state_dict:
         if not (k in state_dict):
-            print('No param {}.'.format(k) + msg)
+            # print('No param {}.'.format(k) + msg)
             state_dict[k] = model_state_dict[k]
     model.load_state_dict(state_dict, strict=False)
 

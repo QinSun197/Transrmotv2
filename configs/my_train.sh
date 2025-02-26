@@ -4,12 +4,13 @@
 # Modified from Deformable DETR (https://github.com/fundamentalvision/Deformable-DETR)
 # Copyright (c) 2020 SenseTime. All Rights Reserved.
 # ------------------------------------------------------------------------
+export CUDA_VISIBLE_DEVICES=1,2,
 
-
-PRETRAIN=./r50_deformable_detr_plus_iterative_bbox_refinement-checkpoint.pth
-EXP_DIR=default
-python3 -m torch.distributed.launch --nproc_per_node=8 \
-   --use_env main.py \
+PRETRAIN=weights/r50_deformable_detr_plus_iterative_bbox_refinement-checkpoint.pth
+EXP_DIR=outputs/try/train
+python3 -m torch.distributed.launch \
+   --nproc_per_node=1 \
+   --use_env main_debug.py \
    --meta_arch rmot \
    --use_checkpoint \
    --dataset_file e2e_rmot \

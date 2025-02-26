@@ -450,7 +450,7 @@ class Detector(object):
 
         with open(txt_path, 'w') as f:
             for k in json_info['label'].keys():
-                frame_id = int(k) + 1
+                frame_id = int(k)
                 if not os.path.isfile(os.path.join(gt_txt_file, '{:06d}.txt'.format(frame_id))):
                     continue
                 frame_gt = np.loadtxt(
@@ -461,7 +461,7 @@ class Detector(object):
                     if int(frame_gt_line[1]) in aa:  # choose referent gt from all gt
                         track_id = int(frame_gt_line[1])
                         x1, y1, w, h = frame_gt_line[2:6] # KITTI -> [x1, y1, w, h]
-                        line = save_format.format(frame=frame_id, id=track_id, x1=x1 * im_width, y1=y1 * im_height,
+                        line = save_format.format(frame=frame_id+1, id=track_id, x1=x1 * im_width, y1=y1 * im_height,
                                                   w=w * im_width, h=h * im_height)
                         f.write(line)
 
@@ -519,7 +519,7 @@ class Detector(object):
 
             if args.visualization:
                 # for visual
-                cur_vis_img_path = os.path.join(self.save_path, 'frame_{}.jpg'.format(i))
+                cur_vis_img_path = os.path.join(self.save_path, '{:06d}.jpg'.format(i))
                 gt_boxes = None
                 self.visualize_img_with_bbox(cur_vis_img_path, ori_img, dt_instances, gt_boxes=gt_boxes)
 

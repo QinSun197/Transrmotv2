@@ -251,7 +251,7 @@ class Detector(object):
         self.img_list = sorted(img_list)
         self.img_len = len(self.img_list)
 
-        self.json_path = os.path.join('/data/Dataset/KITTI/expression_clean/', seq_num[0], seq_num[1])
+        self.json_path = os.path.join('/data/sq_2023/refer-kitti/expression_clean/', seq_num[0], seq_num[1])
         with open(self.json_path, 'r') as f:
             json_info = json.load(f)
         self.json_info = json_info
@@ -315,8 +315,8 @@ if __name__ == '__main__':
     #             'MOT17-08-SDP',
     #             'MOT17-12-SDP',
     #             'MOT17-14-SDP']
-    data_root = '/data/Dataset/KITTI/training/image_02/'
-    expressions_root = '/data/Dataset/KITTI/expression_clean/'
+    data_root = '/data/sq_2023/refer-kitti/training/image_02/'
+    expressions_root = '/data/sq_2023/refer-kitti/expression_clean/'
     # video_ids = sorted(os.listdir(expressions_root))
     # video_ids = ['0005', '0011', '0013']
     video_ids = ['0015']

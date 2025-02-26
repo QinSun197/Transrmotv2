@@ -1,0 +1,20 @@
+__pycache__/
+*.pth
+*.train
+exps/
+build/
+*.egg
+*.egg-info
+*.mp4
+.idea
+*.gif
+.vscode/
+.config/
+
+# project files
+
+outputs/
+TrackEval/
+weights/
+log/
+try.py

@@ -8,8 +8,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
 
-
-
 import argparse
 import datetime
 import json
@@ -17,19 +15,18 @@ import os.path
 import random
 import time
 from pathlib import Path
-
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 import datasets
-
 from util.tool import load_model
 import util.misc as utils
 import datasets.samplers as samplers
 from datasets import build_dataset
 from engine import train_one_epoch, train_one_epoch_rmot
 from models import build_model
-
+from util.misc import setup_logger
+import logging
 from tensorboardX import SummaryWriter
 
 
@@ -50,7 +47,6 @@ def get_args_parser():
                         help='gradient clipping max norm')
 
     parser.add_argument('--meta_arch', default='deformable_detr', type=str)
-
     parser.add_argument('--sgd', action='store_true')
 
     # Variants of Deformable DETR
@@ -90,6 +86,12 @@ def get_args_parser():
                         help="Number of attention heads inside the transformer's attentions")
     parser.add_argument('--num_queries', default=300, type=int,
                         help="Number of query slots")
+    parser.add_argument('--vision_dim', default=256, type=int,
+                        help="dim of image features")
+    parser.add_argument('--language_dim', default=256, type=int,
+                        help="dim of language features")
+    parser.add_argument('--sentence_fusion_mode', default='add', type=str,
+                        help="mode of sentence fusion [add, concat]") 
     parser.add_argument('--dec_n_points', default=4, type=int)
     parser.add_argument('--enc_n_points', default=4, type=int)
     parser.add_argument('--decoder_cross_self', default=False, action='store_true')
@@ -185,11 +187,15 @@ def get_args_parser():
 
 def main(args):
     utils.init_distributed_mode(args)
+    setup_logger(args.output_dir, rank=utils.get_rank())
+    print(f"rank: {utils.get_rank()}")
     print("git:\n  {}\n".format(utils.get_sha()))
 
     if args.frozen_weights is not None:
         assert args.masks, "Frozen training is meant for segmentation only"
     print(args)
+    if utils.get_rank() == 0:
+      logging.info(args)
 
     device = torch.device(args.device)
 
@@ -204,7 +210,9 @@ def main(args):
 
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print('number of params:', n_parameters)
+    # print(f'number of params: {n_parameters / 1e6}M')
+    if utils.get_rank() == 0:
+      logging.info(f'number of params: {n_parameters / 1e6}M')
 
     dataset_train = build_dataset(image_set='train', args=args)
 
@@ -335,7 +343,9 @@ def main(args):
             dataset_train.step_epoch()
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
+    # print('Training time {}'.format(total_time_str))
+    if utils.get_rank() == 0:
+      logging.info('Training time {}'.format(total_time_str))
 
 
 if __name__ == '__main__':
