@@ -589,7 +589,7 @@ class TransRMOTV2(nn.Module):
         # Invert attention mask that we get from huggingface because its the opposite in pytorch transformer
         text_pad_mask = tokenized_queries.attention_mask.ne(1).bool()  # [B, S]
 
-        text_sentence_features = text_features
+        text_sentence_features = text_features[:, 0, :]    
         return text_features, text_pad_mask, text_sentence_features
 
     def _forward_single_image(self, samples, track_instances: Instances, sentences):
@@ -600,14 +600,15 @@ class TransRMOTV2(nn.Module):
         # Extract linguistic features
         text_word_features, text_word_mask, text_sentence_features = self.forward_text(sentences, src.device)
         text_word_features = text_word_features.flatten(0, 1).unsqueeze(0)
-        text_word_mask = text_word_mask.flatten(0, 1).unsqueeze(0)
-        text_pos = self.text_pos(NestedTensor(text_word_features, text_word_mask)).permute(2, 0, 1)
-        text_word_features = text_word_features.permute(1, 0, 2)
-
         text_dict = {
             "text_word_features": text_word_features,  # bs, 195, d_model
             "text_sentences_features": text_sentence_features,  # bs, d_model"
         }
+
+        text_word_mask = text_word_mask.flatten(0, 1).unsqueeze(0)
+        text_pos = self.text_pos(NestedTensor(text_word_features, text_word_mask)).permute(2, 0, 1)
+        text_word_features = text_word_features.permute(1, 0, 2)
+
 
         srcs = []
         masks = []
@@ -831,7 +832,7 @@ def build(args):
     query_interaction_layer = build_query_interaction_layer(args, args.query_interaction_layer, d_model, hidden_dim, d_model*2)
 
     img_matcher = build_matcher(args)
-    print(args)
+    # print(args)
     num_frames_per_batch = max(args.sampler_lengths)
     weight_dict = {}
     for i in range(num_frames_per_batch):

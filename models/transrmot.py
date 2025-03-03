@@ -817,7 +817,7 @@ def build(args):
     query_interaction_layer = build_query_interaction_layer(args, args.query_interaction_layer, d_model, hidden_dim, d_model*2)
 
     img_matcher = build_matcher(args)
-    print(args)
+    # print(args)
     num_frames_per_batch = max(args.sampler_lengths)
     weight_dict = {}
     for i in range(num_frames_per_batch):

@@ -21,7 +21,6 @@ from collections import defaultdict, deque
 import datetime
 import pickle
 from typing import Optional, List
-
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -30,6 +29,7 @@ import logging
 
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
+torchvision.disable_beta_transforms_warning()
 if float(torchvision.__version__[:3]) < 0.5:
     import math
     # from torchvision.ops.misc import _NewEmptyTensorOp

@@ -298,37 +298,37 @@ class BiAttentionBlock(nn.Module):
 
 
 
-# test code
-feature_dim =256
-batch_size = 1
-num_images = 234
-num_texts = 6
-num_heads = 8
+# # test code
+# feature_dim =256
+# batch_size = 1
+# num_images = 234
+# num_texts = 6
+# num_heads = 8
 
-img_features = torch.randn(batch_size, num_images, feature_dim) 
-text_features = torch.randn(batch_size, num_texts, feature_dim)  
+# img_features = torch.randn(batch_size, num_images, feature_dim) 
+# text_features = torch.randn(batch_size, num_texts, feature_dim)  
 
-# 配置模型参数
-v_dim = feature_dim  # 图像特征的维度
-l_dim = feature_dim  # 文本特征的维度
-embed_dim = 256      # 嵌入维度
-num_heads = 8        # 多头注意力的头数
-dropout = 0.1        # dropout 概率
+# # 配置模型参数
+# v_dim = feature_dim  # 图像特征的维度
+# l_dim = feature_dim  # 文本特征的维度
+# embed_dim = 256      # 嵌入维度
+# num_heads = 8        # 多头注意力的头数
+# dropout = 0.1        # dropout 概率
 
-# 初始化 BiAttentionBlock
-bi_attention_block = BiAttentionBlock(
-    v_dim=v_dim,
-    l_dim=l_dim,
-    embed_dim=embed_dim,
-    num_heads=num_heads,
-    dropout=dropout
-)
+# # 初始化 BiAttentionBlock
+# bi_attention_block = BiAttentionBlock(
+#     v_dim=v_dim,
+#     l_dim=l_dim,
+#     embed_dim=embed_dim,
+#     num_heads=num_heads,
+#     dropout=dropout
+# )
 
-# 将图像和文本特征传入模型
-attn_img_features, attn_text_features = bi_attention_block(
-    img_features, text_features
-)
+# # 将图像和文本特征传入模型
+# attn_img_features, attn_text_features = bi_attention_block(
+#     img_features, text_features
+# )
 
-# 输出融合后的图像和文本特征
-print(attn_img_features.shape)  # 期望输出 [batch_size, num_images, embed_dim]
-print(attn_text_features.shape)  # 期望输出 [batch_size, num_texts, embed_dim]
+# # 输出融合后的图像和文本特征
+# print(attn_img_features.shape)  # 期望输出 [batch_size, num_images, embed_dim]
+# print(attn_text_features.shape)  # 期望输出 [batch_size, num_texts, embed_dim]
