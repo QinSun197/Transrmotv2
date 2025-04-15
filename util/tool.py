@@ -9,8 +9,10 @@
 # ------------------------------------------------------------------------
 
 import torch
+import math
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
-
 
 def load_model(model, model_path, optimizer=None, resume=False,
                lr=None, lr_step=None):
@@ -69,5 +71,42 @@ def load_model(model, model_path, optimizer=None, resume=False,
     else:
         return model
 
+class FFN(nn.Module):
+    def __init__(self, d_model, d_ffn, dropout: float):
+        super(FFN, self).__init__()
+        self.linear1 = nn.Linear(d_model, d_ffn)
+        self.activation = nn.ReLU(inplace=True)
+        self.dropout1 = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(d_ffn, d_model)
+        self.dropout2 = nn.Dropout(dropout)
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, tgt):
+        tgt2 = self.linear2(
+            self.dropout1(
+                self.activation(
+                    self.linear1(tgt)
+                )
+            )
+        )
+        tgt = tgt + self.dropout2(tgt2)
+        tgt = self.norm(tgt)
+        return tgt
+
+class MLP(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
+        super(MLP, self).__init__()
+        self.num_layers = num_layers
+        hidden = [hidden_dim] * (self.num_layers - 1)
+        self.layers = nn.ModuleList(
+            nn.Linear(in_d, out_d) for in_d, out_d in zip([input_dim] + hidden, hidden + [output_dim])
+        )
+
+    def forward(self, x):
+        for i, layer in enumerate(self.layers):
+            # x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
+            x = F.relu(layer(x), inplace=False) if i < self.num_layers - 1 else layer(x)
+
+        return x
 
 

@@ -36,11 +36,16 @@ from einops import rearrange, repeat
 from .backbone import build_backbone
 from .matcher import build_matcher
 from .deformable_transformer_plus import build_deforamble_transformer, FeatureResizer, VisionLanguageFusionModule
+# QIM
 from .qim import build as build_query_interaction_layer
+# MQU
+# from .query_updater import build as build_query_updater
+from .mqu import build as build_query_updater
 from .memory_bank import build_memory_bank
 from .deformable_detr import SetCriterion, MLP
 from .segmentation import sigmoid_focal_loss
 from .position_encoding import PositionEmbeddingSine1D
+from .NewTracker import NewTracker
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"  # this disables a huggingface tokenizer warning (printed every epoch)
 
@@ -246,6 +251,7 @@ class ClipMatcher(SetCriterion):
         prev_matched_indices = torch.stack(
             [full_track_idxes[matched_track_idxes], track_instances.matched_gt_idxes[matched_track_idxes]], dim=1).to(
             pred_logits_i.device)
+        
 
         # step2. select the unmatched slots.
         # note that the FP tracks whose obj_idxes are -2 will not be selected here.
@@ -295,6 +301,7 @@ class ClipMatcher(SetCriterion):
 
         # step7. merge the unmatched pairs and the matched pairs.
         matched_indices = torch.cat([new_matched_indices, prev_matched_indices], dim=0)
+        unmatched_det_mask = ~torch.isin(full_track_idxes, matched_indices[:, 0])
 
         # step8. calculate losses.
         self.num_samples += len(gt_instances_i) + num_disappear_track
@@ -334,7 +341,11 @@ class ClipMatcher(SetCriterion):
                         {'frame_{}_aux{}_{}'.format(self._current_frame_idx, i, key): value for key, value in
                          l_dict.items()})
         self._step()
-        return track_instances
+
+        prev_track_instances = track_instances[prev_matched_indices[:, 0]]
+        new_track_instances = track_instances[new_matched_indices[:, 0]]
+        unmatched_detections = track_instances[unmatched_det_mask]
+        return track_instances, prev_track_instances, new_track_instances, unmatched_detections
 
     def forward(self, outputs, input_data: dict):
         # losses of each frame are calculated during the model's forwarding and are outputted by the model as outputs['losses_dict].
@@ -400,13 +411,13 @@ class TrackerPostProcess(nn.Module):
         scale_fct = torch.Tensor([img_w, img_h, img_w, img_h]).to(boxes)
         boxes = boxes * scale_fct[None, :]
 
-        track_instances.boxes = boxes
+        track_instances.pred_boxes = boxes
         track_instances.scores = scores
         track_instances.labels = labels
-        track_instances.refers = refers
-        track_instances.remove('pred_logits')
-        track_instances.remove('pred_boxes')
-        track_instances.remove('pred_refers')
+        track_instances.pred_refers = refers
+        # track_instances.remove('pred_logits')
+        # track_instances.remove('pred_boxes')
+        # track_instances.remove('pred_refers')
         return track_instances
 
 
@@ -414,7 +425,7 @@ def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
-class TransRMOT(nn.Module):
+class TransRMOTV7(nn.Module):
     def __init__(self, backbone, transformer, num_classes, num_queries, num_feature_levels, criterion, track_embed,
                  aux_loss=True, with_box_refine=False, two_stage=False, memory_bank=None, use_checkpoint=False):
         """ Initializes the model.
@@ -439,6 +450,8 @@ class TransRMOT(nn.Module):
         self.refer_embed = nn.Linear(hidden_dim, 1) # this is referring branch
         self.num_feature_levels = num_feature_levels
         self.use_checkpoint = use_checkpoint
+        self.tracker = NewTracker(det_score_thresh=0.7, track_score_thresh=0.5)
+
         if not two_stage:
             self.query_embed = nn.Embedding(num_queries, hidden_dim * 2)
         if num_feature_levels > 1:
@@ -530,7 +543,7 @@ class TransRMOT(nn.Module):
         self.memory_bank = memory_bank
         self.mem_bank_len = 0 if memory_bank is None else memory_bank.max_his_length
 
-    def _generate_empty_tracks(self):
+    def _generate_empty_tracks(self, is_training=False):
         track_instances = Instances((1, 1))
         num_queries, dim = self.query_embed.weight.shape  # (300, 512)
         device = self.query_embed.weight.device
@@ -538,19 +551,50 @@ class TransRMOT(nn.Module):
         track_instances.query_pos = self.query_embed.weight
         track_instances.output_embedding = torch.zeros((num_queries, dim >> 1), device=device)
         track_instances.obj_idxes = torch.full((len(track_instances),), -1, dtype=torch.long, device=device)
-        track_instances.matched_gt_idxes = torch.full((len(track_instances),), -1, dtype=torch.long, device=device)
         track_instances.disappear_time = torch.zeros((len(track_instances), ), dtype=torch.long, device=device)
-        track_instances.iou = torch.zeros((len(track_instances),), dtype=torch.float, device=device)
         track_instances.scores = torch.zeros((len(track_instances),), dtype=torch.float, device=device)
-        track_instances.track_scores = torch.zeros((len(track_instances),), dtype=torch.float, device=device)
         track_instances.pred_boxes = torch.zeros((len(track_instances), 4), dtype=torch.float, device=device)
         track_instances.pred_logits = torch.zeros((len(track_instances), self.num_classes), dtype=torch.float, device=device)
         track_instances.pred_refers = torch.zeros((len(track_instances), 1), dtype=torch.float, device=device)
+        track_instances.labels = torch.zeros((len(track_instances),), dtype=torch.long, device=device)
+        
+        # for MQU
+        track_instances.last_output = torch.zeros((len(track_instances), dim // 2), dtype=torch.float)
+        track_instances.long_memory = torch.zeros((len(track_instances), dim // 2), dtype=torch.float)
+        track_instances.det_query_embed = torch.zeros((num_queries, dim), dtype=torch.float)
+        track_instances.init_queries = torch.zeros((num_queries, dim // 2), dtype=torch.float)
 
-        mem_bank_len = self.mem_bank_len
-        track_instances.mem_bank = torch.zeros((len(track_instances), mem_bank_len, dim // 2), dtype=torch.float32, device=device)
-        track_instances.mem_padding_mask = torch.ones((len(track_instances), mem_bank_len), dtype=torch.bool, device=device)
-        track_instances.save_period = torch.zeros((len(track_instances), ), dtype=torch.float32, device=device)
+        # track_instances.last_appear_boxes = torch.zeros((len(track_instances), 4))
+        # track_instances.query_embed = torch.zeros(((len(track_instances), dim*2)))
+        # for training
+        if is_training:
+            track_instances.track_scores = torch.zeros((len(track_instances),), dtype=torch.float, device=device)
+            track_instances.matched_gt_idxes = torch.full((len(track_instances),), -1, dtype=torch.long, device=device)
+            track_instances.iou = torch.zeros((len(track_instances),), dtype=torch.float, device=device)
+            mem_bank_len = self.mem_bank_len
+            track_instances.mem_bank = torch.zeros((len(track_instances), mem_bank_len, dim // 2), dtype=torch.float32, device=device)
+            track_instances.mem_padding_mask = torch.ones((len(track_instances), mem_bank_len), dtype=torch.bool, device=device)
+            track_instances.save_period = torch.zeros((len(track_instances), ), dtype=torch.float32, device=device)
+
+        return track_instances.to(self.query_embed.weight.device)
+    
+    def _generate_one_empty_tracks(self):
+        track_instances = Instances((1, 1))
+        num_queries, dim = 0, self.query_embed.weight.shape[1]  # (300, 512)
+        device = self.query_embed.weight.device
+        track_instances.ref_pts = torch.zeros((0, 2))
+        track_instances.pred_logits = torch.zeros((len(track_instances), self.num_classes), dtype=torch.float, device=device)
+        track_instances.pred_boxes = torch.zeros((len(track_instances), 4), dtype=torch.float, device=device)
+        track_instances.pred_refers = torch.zeros((len(track_instances), 1), dtype=torch.float, device=device)
+        track_instances.scores = torch.zeros((len(track_instances),), dtype=torch.float, device=device)
+        track_instances.query_pos = torch.zeros((0, dim ))
+        track_instances.output_embedding = torch.zeros((num_queries, dim >> 1), device=device)
+        track_instances.disappear_time = torch.zeros((len(track_instances), ), dtype=torch.long, device=device)
+        track_instances.labels = torch.zeros((len(track_instances),), dtype=torch.long, device=device)
+        track_instances.obj_idxes = torch.full((len(track_instances),), -1, dtype=torch.long, device=device) 
+        # for MQU
+        track_instances.last_output = torch.zeros((len(track_instances), dim // 2), dtype=torch.float)
+        track_instances.long_memory = torch.zeros((len(track_instances), dim // 2), dtype=torch.float)
 
         return track_instances.to(self.query_embed.weight.device)
 
@@ -558,12 +602,14 @@ class TransRMOT(nn.Module):
         self.track_base.clear()
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord, outputs_refer):
+    def _set_aux_loss(self, outputs_class, outputs_coord, outputs_refer, queries):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [{'pred_logits': a, 'pred_boxes': b, 'pred_refers': c, }
+        return [{'pred_logits': a, 'pred_boxes': b, 'pred_refers': c}
                 for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_refer[:-1])]
+        # return [{'pred_logits': a, 'pred_boxes': b, 'pred_refers': c, 'queries': d}
+        #         for a, b, c, d in zip(outputs_class[:-1], outputs_coord[:-1], outputs_refer[:-1], queries[1:])]
 
     def forward_text_simple(self, text_querires, device):
         tokenized_queries = text_querires[0].split(' ')
@@ -645,7 +691,7 @@ class TransRMOT(nn.Module):
                 masks.append(mask)
                 pos.append(pos_l)
 
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = \
+        hs, init_reference, init_queries, inter_references, enc_outputs_class, enc_outputs_coord_unact = \
             self.transformer(srcs, masks, pos, track_instances.query_pos, text_sentence_features, ref_pts=track_instances.ref_pts)
 
         outputs_classes = []
@@ -674,11 +720,14 @@ class TransRMOT(nn.Module):
         outputs_coord = torch.stack(outputs_coords)
         outputs_refer = torch.stack(outputs_refers)
 
-        ref_pts_all = torch.cat([init_reference[None], inter_references[:, :, :, :2]], dim=0)
+        ref_pts_all = torch.cat([init_reference[None], inter_references], dim=0)
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1], 'ref_pts': ref_pts_all[5], 'pred_refers': outputs_refer[-1]}
         if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, outputs_refer)
+            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, outputs_refer, init_queries)
         out['hs'] = hs[-1]
+        out['det_query_embed'] = track_instances.query_pos
+        out['init_queries'] = init_queries[-1]
+        # out['last_ref_pts'] = inverse_sigmoid(inter_references[-2, :, :, :])
         return out
     
     def _post_process_single_image(self, frame_res, track_instances, is_last):
@@ -693,47 +742,53 @@ class TransRMOT(nn.Module):
         track_instances.pred_boxes = frame_res['pred_boxes'][0]
         track_instances.pred_refers = frame_res['pred_refers'][0]
         track_instances.output_embedding = frame_res['hs'][0]
+        track_instances.det_query_embed = frame_res['det_query_embed']
+        track_instances.init_queries = frame_res['init_queries'][0]
         if self.training:
             # the track id will be assigned by the mather.
             frame_res['track_instances'] = track_instances
-            track_instances = self.criterion.match_for_single_frame(frame_res)
+            track_instances, prev_tracks, new_tracks, unmatched_dets  = self.criterion.match_for_single_frame(frame_res)
         else:
-            # each track will be assigned an unique global id by the track base.
-            self.track_base.update(track_instances)
+            # self.track_base.update(track_instances)
+            prev_tracks, new_tracks = self.tracker.update(track_instances)
         if self.memory_bank is not None:
             track_instances = self.memory_bank(track_instances)
-            # track_instances.track_scores = track_instances.track_scores[..., 0]
-            # track_instances.scores = track_instances.track_scores.sigmoid()
             if self.training:
                 self.criterion.calc_loss_for_track_scores(track_instances)
-        tmp = {}
-        tmp['init_track_instances'] = self._generate_empty_tracks()
-        tmp['track_instances'] = track_instances
+        object_queries = self._generate_empty_tracks(self.training)
         if not is_last:
-            out_track_instances = self.track_embed(tmp)
-            frame_res['track_instances'] = out_track_instances
+            if self.training:
+                track_queries = self.track_embed(prev_tracks, new_tracks, unmatched_dets)
+            else:
+                track_queries = self.track_embed(prev_tracks, new_tracks, None)
+                # track_queries._fields['scores'] = track_queries._fields['scores'].squeeze(-1)
+            # print(f'track_queries: {len(track_queries)}; object_queries: {len(track_queries)}')
+            next_frame_queries = Instances.cat([object_queries, track_queries])         
+            frame_res['track_instances'] = next_frame_queries
         else:
             frame_res['track_instances'] = None
+
         return frame_res
 
     @torch.no_grad()
-    def inference_single_image(self, img, sentence, ori_img_size, track_instances=None):
+    def inference_single_image(self, img, sentence, ori_img_size, track_instances=None, frame_id=None):
         if not isinstance(img, NestedTensor):
             img = nested_tensor_from_tensor_list(img)
         if track_instances is None:
-            track_instances = self._generate_empty_tracks()
+            track_instances = self._generate_empty_tracks(self.training)
         res = self._forward_single_image(img, track_instances=track_instances, sentences=sentence)
+        
         res = self._post_process_single_image(res, track_instances, False)
 
         track_instances = res['track_instances']
         track_instances = self.post_process(track_instances, ori_img_size)
         ret = {'track_instances': track_instances}
-        if 'ref_pts' in res:
-            ref_pts = res['ref_pts']
-            img_h, img_w = ori_img_size
-            scale_fct = torch.Tensor([img_w, img_h]).to(ref_pts)
-            ref_pts = ref_pts * scale_fct[None]
-            ret['ref_pts'] = ref_pts
+        # if 'ref_pts' in res:
+        #     ref_pts = res['ref_pts']
+        #     img_h, img_w = ori_img_size
+        #     scale_fct = torch.Tensor([img_w, img_h]).to(ref_pts)
+        #     ref_pts = ref_pts * scale_fct[None]
+        #     ret['ref_pts'] = ref_pts
         return ret
 
     def forward(self, data: dict):
@@ -748,7 +803,7 @@ class TransRMOT(nn.Module):
             'pred_refers': [],
         }
 
-        track_instances = self._generate_empty_tracks() ### the generattion of empty tracks is a little confusing
+        track_instances = self._generate_empty_tracks(self.training) ### the generattion of empty tracks is a little confusing
         keys = list(track_instances._fields.keys())
         for frame_index, frame in enumerate(frames):
             frame.requires_grad = False
@@ -764,9 +819,11 @@ class TransRMOT(nn.Module):
                         frame_res['pred_refers'],
                         frame_res['ref_pts'],
                         frame_res['hs'],
+                        frame_res['det_query_embed'],
+                        frame_res['init_queries'],
                         *[aux['pred_logits'] for aux in frame_res['aux_outputs']],
                         *[aux['pred_boxes'] for aux in frame_res['aux_outputs']],
-                        *[aux['pred_refers'] for aux in frame_res['aux_outputs']]
+                        *[aux['pred_refers'] for aux in frame_res['aux_outputs']],
                     )
 
                 args = [frame] + [track_instances.get(k) for k in keys]
@@ -778,10 +835,12 @@ class TransRMOT(nn.Module):
                     'pred_refers': tmp[2],
                     'ref_pts': tmp[3],
                     'hs': tmp[4],
+                    'det_query_embed': tmp[5],
+                    'init_queries': tmp[6],
                     'aux_outputs': [{
-                        'pred_logits': tmp[5+i],
-                        'pred_boxes': tmp[5+5+i],
-                        'pred_refers': tmp[5+5+5+i]
+                        'pred_logits': tmp[7+i],
+                        'pred_boxes': tmp[7+5+i],
+                        'pred_refers': tmp[7+5+5+i],
                     } for i in range(5)],
                 }
             else:
@@ -814,8 +873,10 @@ def build(args):
     transformer = build_deforamble_transformer(args)
     d_model = transformer.d_model
     hidden_dim = args.dim_feedforward
-    query_interaction_layer = build_query_interaction_layer(args, args.query_interaction_layer, d_model, hidden_dim, d_model*2)
-
+    # QIM
+    # query_interaction_layer = build_query_interaction_layer(args, args.query_interaction_layer, d_model, hidden_dim, d_model*2)
+    # MQU
+    query_interaction_layer = build_query_updater(args, args.query_interaction_layer, d_model, hidden_dim, d_model*2)
     img_matcher = build_matcher(args)
     # print(args)
     num_frames_per_batch = max(args.sampler_lengths)
@@ -846,7 +907,7 @@ def build(args):
     criterion = ClipMatcher(num_classes, matcher=img_matcher, weight_dict=weight_dict, losses=losses)
     criterion.to(device)
     postprocessors = {}
-    model = TransRMOT(
+    model = TransRMOTV7(
         backbone,
         transformer,
         track_embed=query_interaction_layer,

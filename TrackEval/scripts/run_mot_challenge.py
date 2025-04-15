@@ -81,6 +81,7 @@ if __name__ == '__main__':
 
     # Run code
     evaluator = trackeval.Evaluator(eval_config)
+    print(dataset_config)
     dataset_list = [trackeval.datasets.MotChallenge2DBox(dataset_config)]
     metrics_list = []
     for metric in [trackeval.metrics.HOTA, trackeval.metrics.CLEAR, trackeval.metrics.Identity, trackeval.metrics.VACE]:
