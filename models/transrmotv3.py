@@ -32,6 +32,7 @@ from transformers import AutoModel, AutoTokenizer
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import GloVe, Vocab, FastText
 from einops import rearrange, repeat
+from torchvision.ops import roi_align # to do roi align
 
 from .backbone import build_backbone
 from .matcher import build_matcher
@@ -659,6 +660,7 @@ class TransRMOTV3(nn.Module):
         return text_features, text_pad_mask, text_sentence_features
     
     def forward_textv2(self, text_queries, device):
+        """split text into word and sentence features"""
         tokenized_queries = self.tokenizer.batch_encode_plus(text_queries, padding="longest", return_tensors='pt').to(device)
         # with torch.inference_mode(mode=self.freeze_text_encoder):
         encoded_text = self.text_encoder(**tokenized_queries)
