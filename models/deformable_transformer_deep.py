@@ -284,7 +284,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
     def forward(self, src, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
         # self attention
-        src2 = self.self_attn(self.with_pos_embed(src, pos), 
+        src2, sampling_locations = self.self_attn(self.with_pos_embed(src, pos), 
                               reference_points, 
                               src, 
                               spatial_shapes, 
