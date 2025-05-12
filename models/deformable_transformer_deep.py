@@ -202,7 +202,6 @@ class DeformableTransformer(nn.Module):
                               position_ids=None,
                               pos_text=None,
                               )
-
         bs, size, c = memory.shape
         sentence_embeds = text_dict['text_sentences_features'].unsqueeze(1)
         # sentence_embeds = 
@@ -284,7 +283,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
     def forward(self, src, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
         # self attention
-        src2, sampling_locations = self.self_attn(self.with_pos_embed(src, pos), 
+        src2 = self.self_attn(self.with_pos_embed(src, pos), 
                               reference_points, 
                               src, 
                               spatial_shapes, 
@@ -305,11 +304,8 @@ class DeformableTransformerEncoder(nn.Module):
         num_layers,
         feature_fusion_layer=None,
         enc_layer_share=False,
-        use_checkpoint=False,
-        use_transformer_ckpt=False,
         d_model=256,
         num_queries=300,
-        text_enhance_layer=None,
     ):
         """_summary_
 
@@ -325,15 +321,10 @@ class DeformableTransformerEncoder(nn.Module):
         super().__init__()
         # prepare layers
         self.layers = []
-        # self.text_layers = []
         self.fusion_layers = []
         if num_layers > 0:
             self.layers = _get_clonesv2(encoder_layer, num_layers, layer_share=enc_layer_share)
 
-            # if text_enhance_layer is not None:
-            #     self.text_layers = _get_clones(
-            #         text_enhance_layer, num_layers, layer_share=enc_layer_share
-            #     )
             if feature_fusion_layer is not None:
                 self.fusion_layers = _get_clonesv2(
                     feature_fusion_layer, num_layers, layer_share=enc_layer_share
@@ -342,20 +333,14 @@ class DeformableTransformerEncoder(nn.Module):
             self.layers = []
             del encoder_layer
 
-            # if text_enhance_layer is not None:
-            #     self.text_layers = []
-            #     del text_enhance_layer
             if feature_fusion_layer is not None:
                 self.fusion_layers = []
                 del feature_fusion_layer
 
         self.query_scale = None
-        # self.num_queries = num_queries
+        self.num_queries = num_queries
         self.num_layers = num_layers
         # self.d_model = d_model
-
-        # self.use_checkpoint = use_checkpoint
-        # self.use_transformer_ckpt = use_transformer_ckpt
 
     @staticmethod
     def get_reference_points(spatial_shapes, valid_ratios, device):
@@ -414,53 +399,19 @@ class DeformableTransformerEncoder(nn.Module):
                 spatial_shapes, valid_ratios, device=src.device
             )
 
-        # if self.text_layers:
-        #     # generate pos_text
-        #     bs, n_text, text_dim = memory_text.shape
-        #     if pos_text is None and position_ids is None:
-        #         pos_text = (
-        #             torch.arange(n_text, device=memory_text.device)
-        #             .float()
-        #             .unsqueeze(0)
-        #             .unsqueeze(-1)
-        #             .repeat(bs, 1, 1)
-        #         )
-        #         pos_text = _get_sine_pos_embed(pos_text, num_pos_feats=256, exchange_xy=False)
-        #     if position_ids is not None:
-        #         pos_text = _get_sine_pos_embed(
-        #             position_ids[..., None], num_pos_feats=256, exchange_xy=False
-        #         )
-
         # main process
         for layer_id, layer in enumerate(self.layers):
-            # if output.isnan().any() or memory_text.isnan().any():
-            #     if os.environ.get('IPDB_SHILONG_DEBUG', None) == 'INFO':
-            #         import ipdb; ipdb.set_trace()
+            # text sentence feature fusion
+            # if (layer_id == 1 or layer_id > 2) and self.fusion_layers:
+            # if layer_id > 2 and self.fusion_layers:
             if self.fusion_layers:
-                # if self.use_checkpoint:
-                #     output, memory_text = checkpoint.checkpoint(
-                #         self.fusion_layers[layer_id],
-                #         output,
-                #         memory_text,
-                #         key_padding_mask,
-                #         text_attention_mask,
-                #     )
-                # else:
                 output, memory_text = self.fusion_layers[layer_id](
                         v=output,
                         l=memory_text,
                         attention_mask_v=key_padding_mask,
                         attention_mask_l=text_attention_mask,
                     )
-
-            # if self.text_layers:
-            #     memory_text = self.text_layers[layer_id](
-            #         src=memory_text.transpose(0, 1),
-            #         src_mask=~text_self_attention_masks,  # note we use ~ for mask here 取反
-            #         src_key_padding_mask=text_attention_mask,
-            #         pos=(pos_text.transpose(0, 1) if pos_text is not None else None),
-            #     ).transpose(0, 1)
-
+            # encode feature    
             output = layer(
                     src=output,
                     pos=pos,
@@ -504,7 +455,6 @@ class DeformableTransformerDecoderLayer(nn.Module):
         self.norm3 = nn.LayerNorm(d_model)
 
         # text sentence feature
-        # self.forword_text_mlp = nn.Linear(d_model, d_model)
         self.forword_text_mlp = TextMLP(dropout=dropout)
         self.cross_attn_text = nn.MultiheadAttention(d_model, n_heads, dropout=dropout)
 
