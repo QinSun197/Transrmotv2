@@ -341,6 +341,7 @@ class DeformableTransformerEncoder(nn.Module):
         self.num_queries = num_queries
         self.num_layers = num_layers
         # self.d_model = d_model
+        # add
 
     @staticmethod
     def get_reference_points(spatial_shapes, valid_ratios, device):
